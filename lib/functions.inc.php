@@ -144,11 +144,11 @@ function generate_sms_token( $sms_token_length ) {
 # Get message criticity
 function get_criticity( $msg ) {
 
-    if ( preg_match( "/nophpldap|phpupgraderequired|nophpmhash|nokeyphrase|ldaperror|nomatch|badcredentials|passworderror|tooshort|toobig|minlower|minupper|mindigit|minspecial|forbiddenchars|sameasold|answermoderror|answernomatch|mailnomatch|tokennotsent|tokennotvalid|notcomplex|smsnonumber|smscrypttokensrequired|nophpmbstring|nophpxml|smsnotsent|sameaslogin|pwned|sshkeyerror|specialatends|forbiddenwords|forbiddenldapfields/" , $msg ) ) {
+    if ( preg_match( "/nophpldap|phpupgraderequired|nophpmhash|nokeyphrase|ldaperror|nomatch|badcredentials|passworderror|tooshort|toobig|minlower|minupper|mindigit|minspecial|forbiddenchars|sameasold|answermoderror|answernomatch|mailnomatch|tokennotsent|tokennotvalid|notcomplex|smsnonumber|smscrypttokensrequired|nophpmbstring|nophpxml|smsnotsent|sameaslogin|pwned|sshkeyerror/" , $msg ) ) {
     return "danger";
     }
 
-    if ( preg_match( "/(login|oldpassword|newpassword|confirmpassword|answer|question|password|mail|token|sshkey)required|badcaptcha|tokenattempts|checkdatabeforesubmit/" , $msg ) ) {
+    if ( preg_match( "/(login|oldpassword|newpassword|confirmpassword|answer|question|password|mail|token|sshkey)required|badcaptcha|tokenattempts/" , $msg ) ) {
         return "warning";
     }
 
@@ -174,7 +174,7 @@ function show_policy( $messages, $pwd_policy_config, $result ) {
     # Should we display it?
     if ( !$pwd_show_policy or $pwd_show_policy === "never" ) { return; }
     if ( $pwd_show_policy === "onerror" ) {
-        if ( !preg_match( "/tooshort|toobig|minlower|minupper|mindigit|minspecial|forbiddenchars|sameasold|notcomplex|sameaslogin|pwned||specialatendsforbiddenwords|forbiddenldapfields/" , $result) ) { return; }
+        if ( !preg_match( "/tooshort|toobig|minlower|minupper|mindigit|minspecial|forbiddenchars|sameasold|notcomplex|sameaslogin|pwned/" , $result) ) { return; }
     }
 
     # Display bloc
@@ -192,23 +192,13 @@ function show_policy( $messages, $pwd_policy_config, $result ) {
     if ( $pwd_no_reuse        ) { echo "<li>".$messages["policynoreuse"]                                 ."\n"; }
     if ( $pwd_diff_login      ) { echo "<li>".$messages["policydifflogin"]                               ."\n"; }
     if ( $use_pwnedpasswords  ) { echo "<li>".$messages["policypwned"]                               ."\n"; }
-    if ( $pwd_no_special_at_ends  ) { echo "<li>".$messages["policyspecialatends"] ."</li>\n"; }
-    if ( !empty($pwd_forbidden_words)) { echo "<li>".$messages["policyforbiddenwords"] ." " . implode(', ', $pwd_forbidden_words) ."</li>\n"; }
-    if ( !empty($pwd_forbidden_ldap_fields)) {
-      $pwd_forbidden_ldap_fields = array_map(
-        function($field) use ($messages) {
-          if(empty($messages['ldap_' . $field])) return $field;
-          return $messages['ldap_' . $field];
-        }, $pwd_forbidden_ldap_fields);
-      echo "<li>".$messages["policyforbiddenldapfields"] ." " . implode(', ', $pwd_forbidden_ldap_fields) ."</li>\n";
-    }
     echo "</ul>\n";
     echo "</div>\n";
 }
 
 # Check password strength
 # @return result code
-function check_password_strength( $password, $oldpassword, $pwd_policy_config, $login, $entry ) {
+function check_password_strength( $password, $oldpassword, $pwd_policy_config, $login ) {
     extract( $pwd_policy_config );
 
     $result = "";
@@ -222,13 +212,9 @@ function check_password_strength( $password, $oldpassword, $pwd_policy_config, $
     $digit = count( $digit_res[0] );
 
     $special = 0;
-    $special_at_ends = false;
     if ( isset($pwd_special_chars) && !empty($pwd_special_chars) ) {
         preg_match_all("/[$pwd_special_chars]/", $password, $special_res);
         $special = count( $special_res[0] );
-        if ( $pwd_no_special_at_ends ) {
-          $special_at_ends = preg_match("/(^[$pwd_special_chars]|[$pwd_special_chars]$)/", $password, $special_res);
-        }
     }
 
     $forbidden = 0;
@@ -268,55 +254,27 @@ function check_password_strength( $password, $oldpassword, $pwd_policy_config, $
     # Forbidden chars
     if ( $forbidden > 0 ) { $result="forbiddenchars"; }
 
-    # Special chars at beginning or end
-    if ( $special_at_ends > 0 && $special == 1 ) { $result="specialatends"; }
-
     # Same as old password?
     if ( $pwd_no_reuse and $password === $oldpassword ) { $result="sameasold"; }
 
     # Same as login?
     if ( $pwd_diff_login and $password === $login ) { $result="sameaslogin"; }
-
-    # Contains forbidden words?
-    if ( !empty($pwd_forbidden_words) ) {
-      foreach( $pwd_forbidden_words as $disallowed ) {
-        if( stripos($password, $disallowed) !== false ) {
-          $result="forbiddenwords";
-	  break;
-	}
-      }
-    }
-
-    # Contains values from forbidden ldap fields?
-    if( !empty($pwd_forbidden_ldap_fields) ) {
-      foreach( $pwd_forbidden_ldap_fields as $field ) {
-        $values = $entry[$field];
-        if(!is_array($entry[$field])) {
-          $values = array($entry[$field]);
-        }
-        foreach($values as $key => $value) {
-          if($key === 'count') continue;
-          if(stripos($password, $value) !== false) {
-            $result = "forbiddenldapfields";
-            break 2;
-          }
-        }
-      }
-    }
 	
-    # pwned?
-    if ($use_pwnedpasswords) {
-        $pwned_passwords = new PwnedPasswords\PwnedPasswords;
-        $insecure = $pwned_passwords->isInsecure($password);
-        if($insecure) { $result="pwned"; }	
-    }
+	# pwned?
+	if ($use_pwnedpasswords) {
+		$pwned_passwords = new PwnedPasswords\PwnedPasswords;
+		
+		$insecure = $pwned_passwords->isInsecure($password);
+		
+		if($insecure) { $result="pwned"; }	
+	}
 
     return $result;
 }
 
 # Change password
 # @return result code
-function change_password( $ldap, $dn, $password, $ad_mode, $ad_options, $samba_mode, $samba_options, $shadow_options, $hash, $hash_options, $who_change_password, $oldpassword, $use_exop_passwd ) {
+function change_password( $ldap, $dn, $password, $ad_mode, $ad_options, $samba_mode, $samba_options, $shadow_options, $hash, $hash_options, $who_change_password, $oldpassword ) {
 
     $result = "";
 
@@ -332,9 +290,6 @@ function change_password( $ldap, $dn, $password, $ad_mode, $ad_options, $samba_m
         if ( isset($samba_options['max_age']) && $samba_options['max_age'] > 0 ) {
              $userdata["sambaPwdMustChange"] = $time + ( $samba_options['max_age'] * 86400 );
         }
-        if ( isset($samba_options['expire_days']) && $samba_options['expire_days'] > 0 ) {
-             $userdata["sambaKickoffTime"] = $time + ( $samba_options['expire_days'] * 86400 );
-        }
     }
 
     # Get hash type if hash is set to auto
@@ -345,7 +300,7 @@ function change_password( $ldap, $dn, $password, $ad_mode, $ad_options, $samba_m
             if ( isset($userpassword) ) {
                 if ( preg_match( '/^\{(\w+)\}/', $userpassword[0], $matches ) ) {
                     $hash = strtoupper($matches[1]);
-                }
+		}
             }
         }
     }
@@ -353,7 +308,7 @@ function change_password( $ldap, $dn, $password, $ad_mode, $ad_options, $samba_m
     # Transform password value
     if ( $ad_mode ) {
         $password = make_ad_password($password);
-    } elseif (!$use_exop_passwd) {
+    } else {
         # Hash password if needed
         if ( $hash == "SSHA" ) {
             $password = make_ssha_password($password);
@@ -399,6 +354,8 @@ function change_password( $ldap, $dn, $password, $ad_mode, $ad_options, $samba_m
         if ( $ad_options['force_pwd_change'] ) {
             $userdata["pwdLastSet"] = 0;
         }
+    } else {
+        $userdata["userPassword"] = $password;
     }
 
     # Shadow options
@@ -437,19 +394,9 @@ function change_password( $ldap, $dn, $password, $ad_mode, $ad_options, $samba_m
         );
 
         $bmod = ldap_modify_batch($ldap, $dn, $modifications);
-    } elseif ($use_exop_passwd) {
-        if (ldap_exop_passwd($ldap, $dn, $oldpassword, $password) === TRUE) {
-            # If password change works update other data
-            if (!empty($userdata)) {
-                ldap_mod_replace($ldap, $dn, $userdata);
-            }
-        }
     } else {
         # Else just replace with new password
-        if (!$ad_mode) {
-            $userdata["userPassword"] = $password;
-        }
-        ldap_mod_replace($ldap, $dn, $userdata);
+        $replace = ldap_mod_replace($ldap, $dn, $userdata);
     }
 
     $errno = ldap_errno($ldap);
@@ -610,32 +557,4 @@ function check_recaptcha($recaptcha_privatekey, $recaptcha_request_method, $resp
     }
 
     return '';
-}
-/* @function string hook_command(string $hook, string  $login, string $newpassword, null|string $oldpassword, null|boolean $hook_password_encodebase64)
-   Creates the command line to execute for the prehook/posthook process. Passwords will be base64 encoded if configured. Base64 encoding will prevent passwords with special
-   characters to be modified by the escapeshellarg() function.
-   @param $hook string script/command to execute for procesing hook data
-   @param $login string username to change/set password for
-   @param $newpassword string new passwword for given login
-   @param $oldpassword string old password for given login
-   @param hook_password_encodebase64 boolean set to true if passwords are to be converted to base64 encoded strings
-*/
-function hook_command($hook, $login, $newpassword, $oldpassword = null, $hook_password_encodebase64 = false) {
-
-    $command = '';
-    if ( isset($hook_password_encodebase64) && $hook_password_encodebase64 ) {
-	$command = escapeshellcmd($hook).' '.escapeshellarg($login).' '.base64_encode($newpassword);
-
-	if ( ! is_null($oldpassword) ) {
-	    $command .= ' '.base64_encode($oldpassword);
-	}
-
-    } else {
-	$command = escapeshellcmd($hook).' '.escapeshellarg($login).' '.escapeshellarg($newpassword);
-
-	if ( ! is_null($oldpassword) ) {
-	    $command .= ' '.escapeshellarg($oldpassword);
-	}
-    }
-    return $command;
 }
